@@ -61,8 +61,8 @@ resource "tls_private_key" "example" {
 }
 
 resource "aws_key_pair" "deployer" {
-  key_name   = "office-key"
-  public_key = tls_private_key.example.public_key_openssh
+  key_name   = "spacelift-${var.environment}"  # Add suffix
+  public_key = file("~/.ssh/id_rsa.pub")
 }
 
 output "private_key_pem" {
