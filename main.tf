@@ -61,7 +61,7 @@ resource "tls_private_key" "example" {
 }
 
 resource "aws_key_pair" "deployer" {
-  key_name   = "your-key-name"
+  key_name   = "office-key"
   public_key = tls_private_key.example.public_key_openssh
 }
 
