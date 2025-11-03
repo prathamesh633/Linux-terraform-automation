@@ -1,6 +1,6 @@
 provider "aws" {
-  region = var.aws_region
-
+  region = "ap-south-1"
+  
 }
 
 # 1. Create a VPC
@@ -35,37 +35,17 @@ resource "aws_route_table_association" "a" {
   route_table_id = aws_route_table.rt.id
 }
 
-# 4. Security group allowing RDP and HTTP
-resource "aws_security_group" "windows" {
-  name        = "${var.name_prefix}-sg"
-  description = "Security group for Windows instance"
+# 4. Security group allowing SSH
+resource "aws_security_group" "ssh" {
+  name        = "allow_ssh"
   vpc_id      = aws_vpc.main.id
-  
-  tags = {
-    Name = "${var.name_prefix}-sg"
-  }
 
   ingress {
-    from_port   = 3389
-    to_port     = 3389
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -74,90 +54,50 @@ resource "aws_security_group" "windows" {
   }
 }
 
-# 5. Generate password for Windows instance
-resource "random_password" "windows" {
-  length           = 16
-  special          = true
-  override_special = "!@#$%&*()-_=+[]{}<>:?"
+# 5. Key Pair (replace with your public key)
+# Generate a new SSH key pair
+resource "tls_private_key" "deployer" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
 }
 
-resource "aws_ssm_parameter" "windows_password" {
-  name        = "/ec2/windows/password"
-  type        = "SecureString"
-  value       = random_password.windows.result
-  description = "Password for the Windows EC2 instance"
-  overwrite   = true
+# Create the AWS key pair
+resource "aws_key_pair" "deployer" {
+  key_name   = "deployer-key"  # or just "deployer-key"
+  public_key = tls_private_key.deployer.public_key_openssh
 }
 
-data "aws_ami" "windows" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["Windows_Server-2022-English-Full-Base-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+# Save the private key to a file (optional but useful)
+resource "local_file" "private_key" {
+  content  = tls_private_key.deployer.private_key_pem
+  filename = "${path.module}/deployer-key.pem"
+  file_permission = "0400"
 }
 
-# 6. Windows EC2 Instance with user creation via user_data
-resource "aws_instance" "windows" {
-  ami                    = data.aws_ami.windows.id
-  instance_type          = var.instance_type
-  subnet_id              = aws_subnet.main.id
-  vpc_security_group_ids = [aws_security_group.windows.id]
-  key_name               = "office-key"
-  get_password_data      = true
+# Output the private key (be careful with this in production)
+output "private_key" {
+  value     = tls_private_key.deployer.private_key_pem
+  sensitive = true
+}
+
+# 6. EC2 Instance with user creation via user_data
+resource "aws_instance" "web" {
+  ami                         = "ami-02d26659fd82cf299" # Amazon Linux 2 AMI (ap-south-1); update as necessary
+  instance_type               = "t2.micro"
+  subnet_id                   = aws_subnet.main.id
+  vpc_security_group_ids      = [aws_security_group.ssh.id]
+  key_name                    = aws_key_pair.deployer.key_name
+  associate_public_ip_address = true
 
   user_data = <<-EOF
-    <powershell>
-    # Create a new standard user
-    $username = "user1"
-    $password = "${random_password.windows.result}"
-    
-    # Create the user
-    net user $username $password /add /y
-    
-    # Add user to Users group (standard user)
-    net localgroup "Users" $username /add
-    
-    # Optional: Set password to never expire
-    WMIC UserAccount WHERE Name='$username' SET PasswordExpires=FALSE
-    
-    # Enable RDP (if not already enabled)
-    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-    Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-    
-    # Allow RDP through firewall
-    netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
-    
-    Write-Host "User $username created successfully"
-    </powershell>
-    <persist>true</persist>
-  EOF
+              #!/bin/bash
+              useradd -m ec2custom
+              echo "ec2custom ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+              chmod 775 /home/ec2custom
+              chown ec2custom:ec2custom /home/ec2custom
+              EOF
 
   tags = {
-    Name = "${var.name_prefix}-ec2"
+    Name = "Terraform-EC2"
   }
-
-  timeouts {
-    create = "10m"
-    delete = "10m"
-  }
-}
-
-# Output the generated password
-output "windows_password" {
-  description = "Auto-generated password for Windows user"
-  value       = random_password.windows.result
-  sensitive   = true
-}
-
-output "ssm_parameter_name" {
-  description = "SSM parameter name where password is stored"
-  value       = aws_ssm_parameter.windows_password.name
 }
