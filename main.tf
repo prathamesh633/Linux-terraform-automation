@@ -1,6 +1,5 @@
 provider "aws" {
   region = "ap-south-1"
-  profile = "office-user"
 }
 
 # 1. Create a VPC
