@@ -1,6 +1,6 @@
 provider "aws" {
   region = "ap-south-1"
-  
+  profile = "office-user"
 }
 
 # 1. Create a VPC
@@ -54,30 +54,10 @@ resource "aws_security_group" "ssh" {
   }
 }
 
-# 5. Key Pair (replace with your public key)
-# Generate a new SSH key pair
-resource "tls_private_key" "deployer" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-# Create the AWS key pair
-resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"  # or just "deployer-key"
-  public_key = tls_private_key.deployer.public_key_openssh
-}
-
-# Save the private key to a file (optional but useful)
-resource "local_file" "private_key" {
-  content  = tls_private_key.deployer.private_key_pem
-  filename = "${path.module}/deployer-key.pem"
-  file_permission = "0400"
-}
-
-# Output the private key (be careful with this in production)
-output "private_key" {
-  value     = tls_private_key.deployer.private_key_pem
-  sensitive = true
+# 5. Use existing "office-key" key pair
+# Reference the existing key pair (no need to create new one)
+data "aws_key_pair" "office_key" {
+  key_name = "office-key"
 }
 
 # 6. EC2 Instance with user creation via user_data
@@ -86,15 +66,19 @@ resource "aws_instance" "web" {
   instance_type               = "t2.micro"
   subnet_id                   = aws_subnet.main.id
   vpc_security_group_ids      = [aws_security_group.ssh.id]
-  key_name                    = aws_key_pair.deployer.key_name
+  key_name                    = data.aws_key_pair.office_key.key_name  # Use existing office-key
   associate_public_ip_address = true
 
   user_data = <<-EOF
               #!/bin/bash
               useradd -m ec2custom
               echo "ec2custom ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-              chmod 775 /home/ec2custom
-              chown ec2custom:ec2custom /home/ec2custom
+              mkdir -p /home/ec2custom/.ssh
+              chmod 700 /home/ec2custom/.ssh
+              # Add your public key to authorized_keys for passwordless SSH
+              echo "REPLACE_WITH_YOUR_PUBLIC_KEY" >> /home/ec2custom/.ssh/authorized_keys
+              chmod 600 /home/ec2custom/.ssh/authorized_keys
+              chown -R ec2custom:ec2custom /home/ec2custom
               EOF
 
   tags = {
