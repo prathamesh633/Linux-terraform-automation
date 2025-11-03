@@ -1,5 +1,6 @@
 provider "aws" {
   region = "ap-south-1"
+  profile = "office-user"
   
 }
 
@@ -55,18 +56,28 @@ resource "aws_security_group" "ssh" {
 }
 
 # 5. Key Pair (replace with your public key)
-resource "tls_private_key" "example" {
+# Generate a new SSH key pair
+resource "tls_private_key" "deployer" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
+# Create the AWS key pair
 resource "aws_key_pair" "deployer" {
-  key_name   = "spacelift-${var.environment}"  # Add suffix
-  public_key = file("~/.ssh/id_rsa.pub")
+  key_name   = "deployer-key"  # or just "deployer-key"
+  public_key = tls_private_key.deployer.public_key_openssh
 }
 
-output "private_key_pem" {
-  value     = tls_private_key.example.private_key_pem
+# Save the private key to a file (optional but useful)
+resource "local_file" "private_key" {
+  content  = tls_private_key.deployer.private_key_pem
+  filename = "${path.module}/deployer-key.pem"
+  file_permission = "0400"
+}
+
+# Output the private key (be careful with this in production)
+output "private_key" {
+  value     = tls_private_key.deployer.private_key_pem
   sensitive = true
 }
 
